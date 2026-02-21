@@ -16,7 +16,7 @@
     <main class="page">
       <header class="hero">
         <h1>My GitHub Resume</h1>
-        <p>Generate a one-page developer profile from any public GitHub username.</p>
+        <p>Because your code speaks for itself. Generate a print-ready resume from live GitHub data.</p>
       </header>
 
       <section class="controls">
@@ -33,6 +33,9 @@
             <button id="generate-btn" type="submit">Generate Resume</button>
           </div>
         </form>
+        <div class="action-row">
+          <button id="print-btn" type="button" class="ghost hidden">Print / Save PDF</button>
+        </div>
         <p id="status" class="status" aria-live="polite"></p>
       </section>
 
@@ -86,6 +89,7 @@
 
         <section class="content-block">
           <h3>Most Used Programming Languages</h3>
+          <div id="language-chart" class="lang-chart"></div>
           <ul id="languages" class="list"></ul>
         </section>
 

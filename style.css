@@ -1,12 +1,13 @@
 :root {
-  --bg: radial-gradient(circle at 10% 20%, #f5f2eb 0%, #e7f0f2 45%, #dde7f7 100%);
-  --paper: #fffdf9;
-  --ink: #1f2933;
-  --muted: #52606d;
-  --line: #d9e2ec;
-  --accent: #b44d28;
-  --accent-soft: #f7ece8;
-  --shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  --bg: radial-gradient(circle at 15% 10%, #fdf6e9 0%, #ecf3ff 40%, #dce8ff 100%);
+  --paper: #fffefb;
+  --ink: #1c2630;
+  --muted: #5a6775;
+  --line: #d3dbe5;
+  --accent: #135ca8;
+  --accent-2: #f08c2e;
+  --accent-soft: #e8f2ff;
+  --shadow: 0 18px 38px rgba(12, 23, 41, 0.15);
 }
 
 * {
@@ -38,7 +39,7 @@ body {
 }
 
 .controls {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.78);
   border: 1px solid #ffffff;
   border-radius: 12px;
   padding: 1rem;
@@ -73,11 +74,21 @@ input {
 button {
   border: none;
   border-radius: 10px;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--accent) 0%, #0f77c8 100%);
   color: white;
   padding: 0.7rem 1rem;
   font-weight: 700;
   cursor: pointer;
+}
+
+button.ghost {
+  background: white;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.action-row {
+  margin-top: 0.65rem;
 }
 
 button:disabled {
@@ -152,7 +163,7 @@ button:disabled {
 .stat-card {
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: linear-gradient(160deg, #ffffff 0%, #fbfdff 100%);
   padding: 0.85rem;
 }
 
@@ -215,11 +226,54 @@ button:disabled {
 
 .pill {
   background: var(--accent-soft);
-  color: #89361b;
+  color: var(--accent);
   border-radius: 999px;
   padding: 0.2rem 0.5rem;
   font-size: 0.85rem;
   align-self: start;
+}
+
+.lang-chart {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.7rem;
+}
+
+.lang-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.lang-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lang-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2) 0%, var(--accent) 100%);
+  transform-origin: left center;
+  animation: growBar 550ms ease-out both;
+}
+
+.lang-value {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+@keyframes growBar {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
 }
 
 @media (max-width: 700px) {
@@ -233,6 +287,10 @@ button:disabled {
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .lang-row {
+    grid-template-columns: 90px 1fr auto;
   }
 }
 

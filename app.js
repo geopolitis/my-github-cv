@@ -1,6 +1,7 @@
 const form = document.getElementById("resume-form");
 const usernameInput = document.getElementById("username");
 const generateButton = document.getElementById("generate-btn");
+const printButton = document.getElementById("print-btn");
 const statusEl = document.getElementById("status");
 const resumeEl = document.getElementById("resume");
 
@@ -20,11 +21,14 @@ const totalStarsEl = document.getElementById("total-stars");
 
 const contribSnapshotEl = document.getElementById("contrib-snapshot");
 const topReposEl = document.getElementById("top-repos");
+const languageChartEl = document.getElementById("language-chart");
 const languagesEl = document.getElementById("languages");
 const achievementsEl = document.getElementById("achievements");
 const recentActivityEl = document.getElementById("recent-activity");
 
 const GITHUB_API = "https://api.github.com";
+
+printButton.addEventListener("click", () => window.print());
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -36,6 +40,7 @@ form.addEventListener("submit", async (event) => {
 
   setLoading(true);
   resumeEl.classList.add("hidden");
+  printButton.classList.add("hidden");
   clearLists();
 
   try {
@@ -91,6 +96,7 @@ form.addEventListener("submit", async (event) => {
 
     setStatus(`Advanced resume generated for @${user.login}.`);
     resumeEl.classList.remove("hidden");
+    printButton.classList.remove("hidden");
   } catch (error) {
     setStatus(error.message, true);
   } finally {
@@ -172,6 +178,7 @@ function renderUser(payload) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6);
   renderLanguages(sortedLanguages);
+  renderLanguageChart(sortedLanguages);
 
   const eventSummary = summarizeEvents(events);
   const contribItems = buildContributionItems({
@@ -330,6 +337,28 @@ function renderLanguages(languages) {
   });
 }
 
+function renderLanguageChart(languages) {
+  if (languages.length === 0) {
+    languageChartEl.innerHTML = "";
+    return;
+  }
+
+  const total = languages.reduce((sum, row) => sum + row[1], 0);
+  languageChartEl.innerHTML = "";
+
+  languages.forEach(([language, count]) => {
+    const percent = total > 0 ? Math.round((count / total) * 100) : 0;
+    const row = document.createElement("div");
+    row.className = "lang-row";
+    row.innerHTML = `
+      <span class="lang-label">${escapeHtml(language)}</span>
+      <div class="lang-bar" style="width:${percent}%"></div>
+      <span class="lang-value">${percent}%</span>
+    `;
+    languageChartEl.appendChild(row);
+  });
+}
+
 function renderRecentActivity(lines) {
   if (!lines.length) {
     recentActivityEl.appendChild(createEmptyItem("No recent public activity available."));
@@ -362,6 +391,7 @@ function createEmptyItem(message) {
 function clearLists() {
   contribSnapshotEl.innerHTML = "";
   topReposEl.innerHTML = "";
+  languageChartEl.innerHTML = "";
   languagesEl.innerHTML = "";
   achievementsEl.innerHTML = "";
   recentActivityEl.innerHTML = "";
