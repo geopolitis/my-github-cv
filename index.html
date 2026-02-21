@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My GitHub Resume</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Work+Sans:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <h1>My GitHub Resume</h1>
+        <p>Generate a one-page developer profile from any public GitHub username.</p>
+      </header>
+
+      <section class="controls">
+        <form id="resume-form" autocomplete="off">
+          <label for="username">GitHub Username</label>
+          <div class="input-row">
+            <input
+              id="username"
+              name="username"
+              type="text"
+              placeholder="e.g. torvalds"
+              required
+            />
+            <button id="generate-btn" type="submit">Generate Resume</button>
+          </div>
+        </form>
+        <p id="status" class="status" aria-live="polite"></p>
+      </section>
+
+      <section id="resume" class="resume hidden" aria-live="polite">
+        <div class="resume-header">
+          <img id="avatar" class="avatar" src="" alt="GitHub profile avatar" />
+          <div>
+            <h2 id="name">Name</h2>
+            <p id="handle">@username</p>
+            <p id="bio">Bio appears here.</p>
+            <p id="meta" class="meta"></p>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <h3>Total Repos</h3>
+            <p id="repo-count">0</p>
+          </article>
+          <article class="stat-card">
+            <h3>Followers</h3>
+            <p id="followers">0</p>
+          </article>
+          <article class="stat-card">
+            <h3>Following</h3>
+            <p id="following">0</p>
+          </article>
+        </div>
+
+        <section class="content-block">
+          <h3>Top 5 Most Starred Repositories</h3>
+          <ul id="top-repos" class="list"></ul>
+        </section>
+
+        <section class="content-block">
+          <h3>Most Used Programming Languages</h3>
+          <ul id="languages" class="list"></ul>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
