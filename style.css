@@ -191,6 +191,12 @@ button:disabled {
   gap: 0.65rem;
 }
 
+.list li.simple-item {
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .list .item-main {
   min-width: 0;
 }
