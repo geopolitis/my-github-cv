@@ -1,0 +1,6 @@
+name = "my-github-cv-oauth-relay"
+main = "src/worker.js"
+compatibility_date = "2026-02-21"
+
+[observability.logs]
+enabled = true

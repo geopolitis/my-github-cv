@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Work+Sans:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./style.css?v=20260221-2" />
+    <link rel="stylesheet" href="./style.css?v=20260221-3" />
   </head>
   <body>
     <main class="page">
@@ -21,6 +21,13 @@
 
       <section class="controls">
         <div class="auth-controls">
+          <label for="oauth-relay-url">OAuth Relay URL</label>
+          <input
+            id="oauth-relay-url"
+            name="oauth-relay-url"
+            type="url"
+            placeholder="https://your-oauth-relay.workers.dev"
+          />
           <label for="oauth-client-id">GitHub OAuth Client ID</label>
           <div class="input-row">
             <input
@@ -161,6 +168,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260221-2"></script>
+    <script src="./app.js?v=20260221-3"></script>
   </body>
 </html>

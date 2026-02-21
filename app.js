@@ -5,6 +5,7 @@ const printButton = document.getElementById("print-btn");
 const statusEl = document.getElementById("status");
 const resumeEl = document.getElementById("resume");
 
+const relayUrlInput = document.getElementById("oauth-relay-url");
 const clientIdInput = document.getElementById("oauth-client-id");
 const loginButton = document.getElementById("login-btn");
 const logoutButton = document.getElementById("logout-btn");
@@ -41,10 +42,9 @@ const repoMaturityEl = document.getElementById("repo-maturity");
 const recentActivityEl = document.getElementById("recent-activity");
 
 const GITHUB_API = "https://api.github.com";
-const DEVICE_CODE_URL = "https://github.com/login/device/code";
-const DEVICE_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const OAUTH_SCOPES = "read:user user:email repo read:org";
 const STORAGE = {
+  relayUrl: "gh_resume_oauth_relay_url",
   clientId: "gh_resume_oauth_client_id",
   token: "gh_resume_access_token",
   login: "gh_resume_login",
@@ -72,6 +72,16 @@ form.addEventListener("submit", async (event) => {
 bootstrapAuth();
 
 async function bootstrapAuth() {
+  relayUrlInput.value = localStorage.getItem(STORAGE.relayUrl) || "";
+  relayUrlInput.addEventListener("change", () => {
+    const val = relayUrlInput.value.trim();
+    if (!val) {
+      localStorage.removeItem(STORAGE.relayUrl);
+      return;
+    }
+    localStorage.setItem(STORAGE.relayUrl, normalizeRelayUrl(val));
+  });
+
   clientIdInput.value = localStorage.getItem(STORAGE.clientId) || "";
   clientIdInput.addEventListener("change", () => {
     const val = clientIdInput.value.trim();
@@ -101,23 +111,30 @@ async function bootstrapAuth() {
 }
 
 async function handleDeviceLogin() {
+  const relayBase = getRelayBase();
+  if (!relayBase) {
+    setAuthMeta("Add your OAuth Relay URL first.", true);
+    return;
+  }
+
   const clientId = clientIdInput.value.trim();
   if (!clientId) {
     setAuthMeta("Add your OAuth Client ID first.", true);
     return;
   }
 
+  localStorage.setItem(STORAGE.relayUrl, relayBase);
   localStorage.setItem(STORAGE.clientId, clientId);
   setAuthMeta("Requesting device code...");
 
   try {
-    const deviceStart = await fetch(DEVICE_CODE_URL, {
+    const deviceStart = await fetch(`${relayBase}/oauth/device/code`, {
       method: "POST",
       headers: {
         Accept: "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
       },
-      body: new URLSearchParams({
+      body: JSON.stringify({
         client_id: clientId,
         scope: OAUTH_SCOPES,
       }),
@@ -145,13 +162,13 @@ async function handleDeviceLogin() {
     while (Date.now() < expiresAt) {
       await sleep(interval * 1000);
 
-      const tokenRes = await fetch(DEVICE_TOKEN_URL, {
+      const tokenRes = await fetch(`${relayBase}/oauth/device/token`, {
         method: "POST",
         headers: {
           Accept: "application/json",
-          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Type": "application/json",
         },
-        body: new URLSearchParams({
+        body: JSON.stringify({
           client_id: clientId,
           device_code: deviceData.device_code,
           grant_type: "urn:ietf:params:oauth:grant-type:device_code",
@@ -202,6 +219,16 @@ async function handleDeviceLogin() {
   } catch (error) {
     setAuthMeta(error.message, true);
   }
+}
+
+function getRelayBase() {
+  const raw = relayUrlInput.value.trim() || localStorage.getItem(STORAGE.relayUrl) || "";
+  if (!raw) return "";
+  return normalizeRelayUrl(raw);
+}
+
+function normalizeRelayUrl(url) {
+  return String(url).trim().replace(/\/+$/, "");
 }
 
 function handleLogout() {
