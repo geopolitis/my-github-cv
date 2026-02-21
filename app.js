@@ -24,6 +24,11 @@ const topReposEl = document.getElementById("top-repos");
 const languageChartEl = document.getElementById("language-chart");
 const languagesEl = document.getElementById("languages");
 const achievementsEl = document.getElementById("achievements");
+const insightsListEl = document.getElementById("insights-list");
+const languageBytesChartEl = document.getElementById("language-bytes-chart");
+const languageBytesListEl = document.getElementById("language-bytes-list");
+const stackFingerprintEl = document.getElementById("stack-fingerprint");
+const repoMaturityEl = document.getElementById("repo-maturity");
 const recentActivityEl = document.getElementById("recent-activity");
 
 const GITHUB_API = "https://api.github.com";
@@ -83,6 +88,13 @@ form.addEventListener("submit", async (event) => {
     const lifetimeCommitEstimate = await estimateLifetimeCommits(user.login, repos);
     const authoredPrs = authoredPrSearch.ok ? authoredPrSearch.data.total_count : null;
     const mergedPrs = mergedPrSearch.ok ? mergedPrSearch.data.total_count : null;
+    const insightBundle = await buildInsightBundle({
+      login: user.login,
+      repos,
+      events,
+      authoredPrs,
+      mergedPrs,
+    });
 
     renderUser({
       user,
@@ -92,6 +104,7 @@ form.addEventListener("submit", async (event) => {
       authoredPrs,
       mergedPrs,
       lifetimeCommitEstimate,
+      insightBundle,
     });
 
     setStatus(`Advanced resume generated for @${user.login}.`);
@@ -145,7 +158,16 @@ async function estimateLifetimeCommits(login, repos) {
 }
 
 function renderUser(payload) {
-  const { user, repos, orgs, events, authoredPrs, mergedPrs, lifetimeCommitEstimate } = payload;
+  const {
+    user,
+    repos,
+    orgs,
+    events,
+    authoredPrs,
+    mergedPrs,
+    lifetimeCommitEstimate,
+    insightBundle,
+  } = payload;
 
   avatarEl.src = user.avatar_url;
   nameEl.textContent = user.name || user.login;
@@ -198,11 +220,162 @@ function renderUser(payload) {
     orgCount: orgs.length,
   });
   renderPlainList(achievementsEl, achievementItems);
+  renderPlainList(insightsListEl, insightBundle.insightRows);
+  renderPlainList(stackFingerprintEl, insightBundle.stackRows);
+  renderPlainList(repoMaturityEl, insightBundle.maturityRows);
+  renderLanguageBytesChart(insightBundle.languageBytesRows);
+  renderLanguageBytesList(insightBundle.languageBytesRows);
 
   renderRecentActivity(eventSummary.recentEvents);
 
   dataScopeEl.textContent =
     "This report uses public GitHub API data. Private organizations, private repos, private commits, and line-level code volume are not exposed here.";
+}
+
+async function buildInsightBundle(payload) {
+  const { login, repos, events, authoredPrs, mergedPrs } = payload;
+  const ownedRepos = repos
+    .filter((repo) => repo.owner && repo.owner.login === login && !repo.fork)
+    .sort((a, b) => new Date(b.pushed_at) - new Date(a.pushed_at))
+    .slice(0, 8);
+
+  const perRepoInsights = await Promise.all(
+    ownedRepos.map(async (repo) => {
+      const repoPath = `/repos/${encodeURIComponent(login)}/${encodeURIComponent(repo.name)}`;
+      const [languagesRes, rootRes, workflowsRes] = await Promise.all([
+        fetchJson(`${repoPath}/languages`),
+        fetchJson(`${repoPath}/contents`),
+        fetchJson(`${repoPath}/contents/.github/workflows`),
+      ]);
+      return {
+        repo,
+        languages: languagesRes.ok && languagesRes.data ? languagesRes.data : {},
+        root: rootRes.ok && Array.isArray(rootRes.data) ? rootRes.data : [],
+        workflows: workflowsRes.ok && Array.isArray(workflowsRes.data) ? workflowsRes.data : [],
+      };
+    })
+  );
+
+  const languageBytes = {};
+  const stackCounts = {};
+  const maturityRows = [];
+  let withCi = 0;
+  let withTests = 0;
+  let withReadme = 0;
+  let matureRepos = 0;
+
+  perRepoInsights.forEach((entry) => {
+    Object.entries(entry.languages).forEach(([lang, bytes]) => {
+      languageBytes[lang] = (languageBytes[lang] || 0) + bytes;
+    });
+
+    const rootNames = new Set(entry.root.map((item) => String(item.name || "").toLowerCase()));
+    const hasReadme = [...rootNames].some((name) => name.startsWith("readme"));
+    const hasLicense = entry.repo.license !== null;
+    const hasTests =
+      rootNames.has("test") ||
+      rootNames.has("tests") ||
+      rootNames.has("__tests__") ||
+      rootNames.has("spec") ||
+      rootNames.has("specs");
+    const hasCi = entry.workflows.length > 0;
+    const recentPush =
+      Date.now() - new Date(entry.repo.pushed_at).getTime() <= 180 * 24 * 60 * 60 * 1000;
+
+    const score = [hasReadme, hasLicense, hasTests, hasCi, recentPush].filter(Boolean).length * 20;
+    if (score >= 60) matureRepos += 1;
+    if (hasCi) withCi += 1;
+    if (hasTests) withTests += 1;
+    if (hasReadme) withReadme += 1;
+
+    const badges = [];
+    if (hasReadme) badges.push("README");
+    if (hasLicense) badges.push("License");
+    if (hasTests) badges.push("Tests");
+    if (hasCi) badges.push("CI");
+    if (recentPush) badges.push("Recent");
+    maturityRows.push(
+      `${entry.repo.name}: ${score}/100 ${badges.length ? `(${badges.join(" • ")})` : "(No maturity signals found)"}`
+    );
+
+    registerStackSignals(stackCounts, rootNames, hasCi);
+  });
+
+  const languageBytesRows = Object.entries(languageBytes)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  const stackRows = Object.entries(stackCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([name, count]) => `${name}: detected in ${count} repo${count > 1 ? "s" : ""}`);
+
+  const mergeRate =
+    authoredPrs && authoredPrs > 0 && mergedPrs !== null
+      ? `${Math.round((mergedPrs / authoredPrs) * 100)}%`
+      : "Unavailable";
+  const eventWindowDays = estimateEventWindowDays(events);
+  const externalRepos = getExternalContributionRepoCount(login, events);
+  const recentCommitCount = events
+    .filter((event) => event.type === "PushEvent")
+    .reduce((sum, event) => sum + ((event.payload && event.payload.commits && event.payload.commits.length) || 0), 0);
+
+  const insightRows = [
+    `PR Merge Rate (public): ${mergeRate}`,
+    `External Collaboration Breadth: ${externalRepos} repos in recent public events`,
+    `Commit Velocity: ${recentCommitCount} commits over ~${eventWindowDays} days of visible events`,
+    ownedRepos.length
+      ? `Mature Repo Coverage: ${matureRepos}/${ownedRepos.length} sampled owned repos score 60+`
+      : "Mature Repo Coverage: Unavailable (no owned repos sampled)",
+    ownedRepos.length
+      ? `Quality Signals in Sample: README ${withReadme}/${ownedRepos.length}, Tests ${withTests}/${ownedRepos.length}, CI ${withCi}/${ownedRepos.length}`
+      : "Quality Signals in Sample: Unavailable (no owned repos sampled)",
+  ];
+
+  return {
+    insightRows,
+    languageBytesRows,
+    stackRows: stackRows.length ? stackRows : ["No framework/tool signals detected from sampled repositories."],
+    maturityRows: maturityRows.length ? maturityRows : ["No owned public repositories available for maturity analysis."],
+  };
+}
+
+function registerStackSignals(stackCounts, rootNames, hasCi) {
+  const checks = [
+    ["TypeScript", rootNames.has("tsconfig.json")],
+    ["Node.js", rootNames.has("package.json")],
+    ["Python", rootNames.has("requirements.txt") || rootNames.has("pyproject.toml") || rootNames.has("pipfile")],
+    ["Go", rootNames.has("go.mod")],
+    ["Rust", rootNames.has("cargo.toml")],
+    ["Java", rootNames.has("pom.xml") || rootNames.has("build.gradle") || rootNames.has("build.gradle.kts")],
+    ["Docker", rootNames.has("dockerfile") || rootNames.has("docker-compose.yml")],
+    ["Terraform", [...rootNames].some((name) => name.endsWith(".tf"))],
+    ["Next.js", [...rootNames].some((name) => name.startsWith("next.config."))],
+    ["Vite", [...rootNames].some((name) => name.startsWith("vite.config."))],
+    ["GitHub Actions", hasCi],
+  ];
+
+  checks.forEach(([label, hit]) => {
+    if (!hit) return;
+    stackCounts[label] = (stackCounts[label] || 0) + 1;
+  });
+}
+
+function estimateEventWindowDays(events) {
+  if (!events.length) return 0;
+  const newest = new Date(events[0].created_at).getTime();
+  const oldest = new Date(events[events.length - 1].created_at).getTime();
+  return Math.max(1, Math.round((newest - oldest) / (24 * 60 * 60 * 1000)));
+}
+
+function getExternalContributionRepoCount(login, events) {
+  const repos = new Set();
+  events.forEach((event) => {
+    if (!event.repo || !event.repo.name) return;
+    if (!event.repo.name.toLowerCase().startsWith(`${login.toLowerCase()}/`)) {
+      repos.add(event.repo.name);
+    }
+  });
+  return repos.size;
 }
 
 function summarizeEvents(events) {
@@ -337,6 +510,40 @@ function renderLanguages(languages) {
   });
 }
 
+function renderLanguageBytesChart(rows) {
+  if (!rows.length) {
+    languageBytesChartEl.innerHTML = "";
+    return;
+  }
+  const total = rows.reduce((sum, row) => sum + row[1], 0);
+  languageBytesChartEl.innerHTML = "";
+  rows.forEach(([language, bytes]) => {
+    const percent = total > 0 ? Math.round((bytes / total) * 100) : 0;
+    const row = document.createElement("div");
+    row.className = "lang-row";
+    row.innerHTML = `
+      <span class="lang-label">${escapeHtml(language)}</span>
+      <div class="lang-bar" style="width:${percent}%"></div>
+      <span class="lang-value">${percent}%</span>
+    `;
+    languageBytesChartEl.appendChild(row);
+  });
+}
+
+function renderLanguageBytesList(rows) {
+  if (!rows.length) {
+    languageBytesListEl.appendChild(createEmptyItem("No language byte data available from sampled repositories."));
+    return;
+  }
+  const total = rows.reduce((sum, row) => sum + row[1], 0);
+  rows.forEach(([language, bytes]) => {
+    const percent = total > 0 ? ((bytes / total) * 100).toFixed(1) : "0.0";
+    languageBytesListEl.appendChild(
+      createEmptyItem(`${language}: ${percent}% (${formatNumber(bytes)} bytes)`)
+    );
+  });
+}
+
 function renderLanguageChart(languages) {
   if (languages.length === 0) {
     languageChartEl.innerHTML = "";
@@ -394,6 +601,11 @@ function clearLists() {
   languageChartEl.innerHTML = "";
   languagesEl.innerHTML = "";
   achievementsEl.innerHTML = "";
+  insightsListEl.innerHTML = "";
+  languageBytesChartEl.innerHTML = "";
+  languageBytesListEl.innerHTML = "";
+  stackFingerprintEl.innerHTML = "";
+  repoMaturityEl.innerHTML = "";
   recentActivityEl.innerHTML = "";
 }
 
