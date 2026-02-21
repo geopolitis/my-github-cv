@@ -5,6 +5,15 @@ const printButton = document.getElementById("print-btn");
 const statusEl = document.getElementById("status");
 const resumeEl = document.getElementById("resume");
 
+const clientIdInput = document.getElementById("oauth-client-id");
+const loginButton = document.getElementById("login-btn");
+const logoutButton = document.getElementById("logout-btn");
+const authMetaEl = document.getElementById("auth-meta");
+const devicePanelEl = document.getElementById("device-panel");
+const verifyLinkEl = document.getElementById("verify-link");
+const userCodeEl = document.getElementById("user-code");
+const deviceStatusEl = document.getElementById("device-status");
+
 const avatarEl = document.getElementById("avatar");
 const nameEl = document.getElementById("name");
 const handleEl = document.getElementById("handle");
@@ -32,8 +41,23 @@ const repoMaturityEl = document.getElementById("repo-maturity");
 const recentActivityEl = document.getElementById("recent-activity");
 
 const GITHUB_API = "https://api.github.com";
+const DEVICE_CODE_URL = "https://github.com/login/device/code";
+const DEVICE_TOKEN_URL = "https://github.com/login/oauth/access_token";
+const OAUTH_SCOPES = "read:user user:email repo read:org";
+const STORAGE = {
+  clientId: "gh_resume_oauth_client_id",
+  token: "gh_resume_access_token",
+  login: "gh_resume_login",
+  scopes: "gh_resume_scopes",
+};
+
+let authToken = localStorage.getItem(STORAGE.token) || "";
+let authLogin = localStorage.getItem(STORAGE.login) || "";
+let authScopes = (localStorage.getItem(STORAGE.scopes) || "").split(",").filter(Boolean);
 
 printButton.addEventListener("click", () => window.print());
+loginButton.addEventListener("click", handleDeviceLogin);
+logoutButton.addEventListener("click", handleLogout);
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -42,18 +66,193 @@ form.addEventListener("submit", async (event) => {
     setStatus("Enter a GitHub username.", true);
     return;
   }
+  await generateResume(username);
+});
 
+bootstrapAuth();
+
+async function bootstrapAuth() {
+  clientIdInput.value = localStorage.getItem(STORAGE.clientId) || "";
+  clientIdInput.addEventListener("change", () => {
+    const val = clientIdInput.value.trim();
+    if (!val) {
+      localStorage.removeItem(STORAGE.clientId);
+      return;
+    }
+    localStorage.setItem(STORAGE.clientId, val);
+  });
+
+  if (!authToken) {
+    renderAuthState();
+    return;
+  }
+
+  const me = await fetchJson("/user");
+  if (!me.ok || !me.data || !me.data.login) {
+    clearAuth();
+    renderAuthState();
+    return;
+  }
+
+  authLogin = me.data.login;
+  localStorage.setItem(STORAGE.login, authLogin);
+  usernameInput.value = authLogin;
+  renderAuthState();
+}
+
+async function handleDeviceLogin() {
+  const clientId = clientIdInput.value.trim();
+  if (!clientId) {
+    setAuthMeta("Add your OAuth Client ID first.", true);
+    return;
+  }
+
+  localStorage.setItem(STORAGE.clientId, clientId);
+  setAuthMeta("Requesting device code...");
+
+  try {
+    const deviceStart = await fetch(DEVICE_CODE_URL, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        client_id: clientId,
+        scope: OAUTH_SCOPES,
+      }),
+    });
+
+    const deviceData = await deviceStart.json();
+    if (!deviceStart.ok || !deviceData.device_code) {
+      throw new Error(deviceData.error_description || "Could not start GitHub sign-in flow.");
+    }
+
+    const verifyUrl = deviceData.verification_uri || "https://github.com/login/device";
+    const code = deviceData.user_code;
+    let interval = Number(deviceData.interval || 5);
+    const expiresAt = Date.now() + Number(deviceData.expires_in || 900) * 1000;
+
+    verifyLinkEl.href = verifyUrl;
+    verifyLinkEl.textContent = verifyUrl.replace(/^https?:\/\//, "");
+    userCodeEl.textContent = code;
+    devicePanelEl.classList.remove("hidden");
+    deviceStatusEl.textContent = "Waiting for approval...";
+    setAuthMeta("Complete GitHub authorization in the opened page.");
+
+    window.open(verifyUrl, "_blank", "noopener,noreferrer");
+
+    while (Date.now() < expiresAt) {
+      await sleep(interval * 1000);
+
+      const tokenRes = await fetch(DEVICE_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          client_id: clientId,
+          device_code: deviceData.device_code,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        }),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (tokenData.access_token) {
+        authToken = tokenData.access_token;
+        authScopes = String(tokenData.scope || "").split(",").filter(Boolean);
+        localStorage.setItem(STORAGE.token, authToken);
+        localStorage.setItem(STORAGE.scopes, authScopes.join(","));
+
+        const me = await fetchJson("/user");
+        if (!me.ok || !me.data || !me.data.login) {
+          throw new Error("Authorized, but failed to fetch user profile.");
+        }
+
+        authLogin = me.data.login;
+        localStorage.setItem(STORAGE.login, authLogin);
+        usernameInput.value = authLogin;
+        deviceStatusEl.textContent = "Authorization complete.";
+        setAuthMeta(`Signed in as @${authLogin}.`);
+        renderAuthState();
+        return;
+      }
+
+      if (tokenData.error === "authorization_pending") {
+        deviceStatusEl.textContent = "Waiting for approval...";
+        continue;
+      }
+      if (tokenData.error === "slow_down") {
+        interval += 5;
+        deviceStatusEl.textContent = "GitHub asked to slow down polling...";
+        continue;
+      }
+      if (tokenData.error === "access_denied") {
+        throw new Error("Authorization was denied.");
+      }
+      if (tokenData.error === "expired_token") {
+        throw new Error("Device code expired. Start sign-in again.");
+      }
+
+      throw new Error(tokenData.error_description || "GitHub authorization failed.");
+    }
+
+    throw new Error("Login timed out. Start sign-in again.");
+  } catch (error) {
+    setAuthMeta(error.message, true);
+  }
+}
+
+function handleLogout() {
+  clearAuth();
+  renderAuthState();
+  setAuthMeta("Signed out.");
+}
+
+function clearAuth() {
+  authToken = "";
+  authLogin = "";
+  authScopes = [];
+  localStorage.removeItem(STORAGE.token);
+  localStorage.removeItem(STORAGE.login);
+  localStorage.removeItem(STORAGE.scopes);
+}
+
+function renderAuthState() {
+  const hasAuth = Boolean(authToken && authLogin);
+  logoutButton.classList.toggle("hidden", !hasAuth);
+  devicePanelEl.classList.toggle("hidden", !hasAuth && userCodeEl.textContent === "-");
+  if (hasAuth) {
+    setAuthMeta(`Signed in as @${authLogin}${authScopes.length ? ` (scopes: ${authScopes.join(", ")})` : ""}.`);
+  } else {
+    setAuthMeta("Not signed in. Public mode uses GitHub unauthenticated limits (60 requests/hour per IP).");
+  }
+}
+
+async function generateResume(username) {
   setLoading(true);
   resumeEl.classList.add("hidden");
   printButton.classList.add("hidden");
   clearLists();
 
   try {
+    const isSelfRequested = Boolean(authLogin) && authLogin.toLowerCase() === username.toLowerCase();
+
+    const userPath = isSelfRequested ? "/user" : `/users/${encodeURIComponent(username)}`;
+    const reposPath = isSelfRequested
+      ? "/user/repos?per_page=100&sort=updated"
+      : `/users/${encodeURIComponent(username)}/repos?per_page=100`;
+    const orgsPath = isSelfRequested
+      ? "/user/orgs?per_page=100"
+      : `/users/${encodeURIComponent(username)}/orgs?per_page=100`;
+    const eventsPath = `/users/${encodeURIComponent(username)}/events/public?per_page=100`;
+
     const [userResponse, reposResponse, orgsResponse, eventsResponse] = await Promise.all([
-      fetchJson(`/users/${encodeURIComponent(username)}`),
-      fetchJson(`/users/${encodeURIComponent(username)}/repos?per_page=100`),
-      fetchJson(`/users/${encodeURIComponent(username)}/orgs?per_page=100`),
-      fetchJson(`/users/${encodeURIComponent(username)}/events/public?per_page=100`),
+      fetchJson(userPath),
+      fetchJson(reposPath),
+      fetchJson(orgsPath),
+      fetchJson(eventsPath),
     ]);
 
     if (userResponse.status === 404) {
@@ -61,10 +260,10 @@ form.addEventListener("submit", async (event) => {
     }
 
     const hasForbidden = [userResponse, reposResponse, orgsResponse, eventsResponse].some(
-      (entry) => entry.status === 403
+      (entry) => entry.status === 403 || entry.status === 429
     );
     if (hasForbidden) {
-      throw new Error("GitHub API rate limit reached. Please wait and try again.");
+      throw new Error("GitHub API rate limit reached. Sign in to increase limits, then retry.");
     }
 
     if (!userResponse.ok || !reposResponse.ok) {
@@ -78,16 +277,12 @@ form.addEventListener("submit", async (event) => {
 
     const [authoredPrSearch, mergedPrSearch] = await Promise.all([
       fetchJson(`/search/issues?q=author:${encodeURIComponent(username)}+type:pr&per_page=1`),
-      fetchJson(
-        `/search/issues?q=author:${encodeURIComponent(
-          username
-        )}+type:pr+is:merged&per_page=1`
-      ),
+      fetchJson(`/search/issues?q=author:${encodeURIComponent(username)}+type:pr+is:merged&per_page=1`),
     ]);
 
     const lifetimeCommitEstimate = await estimateLifetimeCommits(user.login, repos);
-    const authoredPrs = authoredPrSearch.ok ? authoredPrSearch.data.total_count : null;
-    const mergedPrs = mergedPrSearch.ok ? mergedPrSearch.data.total_count : null;
+    const authoredPrs = authoredPrSearch.ok && authoredPrSearch.data ? authoredPrSearch.data.total_count : null;
+    const mergedPrs = mergedPrSearch.ok && mergedPrSearch.data ? mergedPrSearch.data.total_count : null;
     const insightBundle = await buildInsightBundle({
       login: user.login,
       repos,
@@ -105,6 +300,7 @@ form.addEventListener("submit", async (event) => {
       mergedPrs,
       lifetimeCommitEstimate,
       insightBundle,
+      isSelfRequested,
     });
 
     setStatus(`Advanced resume generated for @${user.login}.`);
@@ -115,10 +311,17 @@ form.addEventListener("submit", async (event) => {
   } finally {
     setLoading(false);
   }
-});
+}
 
 async function fetchJson(path) {
-  const response = await fetch(`${GITHUB_API}${path}`);
+  const headers = {
+    Accept: "application/vnd.github+json",
+  };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+
+  const response = await fetch(`${GITHUB_API}${path}`, { headers });
   let data = null;
   try {
     data = await response.json();
@@ -140,7 +343,9 @@ async function estimateLifetimeCommits(login, repos) {
 
   const contributorCalls = await Promise.all(
     ownedRepos.map((repo) =>
-      fetchJson(`/repos/${encodeURIComponent(login)}/${encodeURIComponent(repo.name)}/contributors?per_page=100`)
+      fetchJson(
+        `/repos/${encodeURIComponent(login)}/${encodeURIComponent(repo.name)}/contributors?per_page=100`
+      )
     )
   );
 
@@ -167,6 +372,7 @@ function renderUser(payload) {
     mergedPrs,
     lifetimeCommitEstimate,
     insightBundle,
+    isSelfRequested,
   } = payload;
 
   avatarEl.src = user.avatar_url;
@@ -178,7 +384,7 @@ function renderUser(payload) {
   const accountAge = getGithubYears(user.created_at);
   const totalStars = repos.reduce((sum, repo) => sum + (repo.stargazers_count || 0), 0);
 
-  repoCountEl.textContent = formatNumber(user.public_repos);
+  repoCountEl.textContent = formatNumber(repos.length);
   followersEl.textContent = formatNumber(user.followers);
   followingEl.textContent = formatNumber(user.following);
   yearsOnGithubEl.textContent = accountAge;
@@ -228,8 +434,13 @@ function renderUser(payload) {
 
   renderRecentActivity(eventSummary.recentEvents);
 
-  dataScopeEl.textContent =
-    "This report uses public GitHub API data. Private organizations, private repos, private commits, and line-level code volume are not exposed here.";
+  if (isSelfRequested && authToken) {
+    dataScopeEl.textContent =
+      "Authenticated mode: this report may include private repositories and organizations you granted access to, depending on approved scopes.";
+  } else {
+    dataScopeEl.textContent =
+      "Public mode: this report uses public GitHub API data only. Private organizations, private repos, private commits, and line-level code volume are not exposed.";
+  }
 }
 
 async function buildInsightBundle(payload) {
@@ -279,8 +490,7 @@ async function buildInsightBundle(payload) {
       rootNames.has("spec") ||
       rootNames.has("specs");
     const hasCi = entry.workflows.length > 0;
-    const recentPush =
-      Date.now() - new Date(entry.repo.pushed_at).getTime() <= 180 * 24 * 60 * 60 * 1000;
+    const recentPush = Date.now() - new Date(entry.repo.pushed_at).getTime() <= 180 * 24 * 60 * 60 * 1000;
 
     const score = [hasReadme, hasLicense, hasTests, hasCi, recentPush].filter(Boolean).length * 20;
     if (score >= 60) matureRepos += 1;
@@ -295,7 +505,9 @@ async function buildInsightBundle(payload) {
     if (hasCi) badges.push("CI");
     if (recentPush) badges.push("Recent");
     maturityRows.push(
-      `${entry.repo.name}: ${score}/100 ${badges.length ? `(${badges.join(" • ")})` : "(No maturity signals found)"}`
+      `${entry.repo.name}: ${score}/100 ${
+        badges.length ? `(${badges.join(" • ")})` : "(No maturity signals found)"
+      }`
     );
 
     registerStackSignals(stackCounts, rootNames, hasCi);
@@ -317,7 +529,11 @@ async function buildInsightBundle(payload) {
   const externalRepos = getExternalContributionRepoCount(login, events);
   const recentCommitCount = events
     .filter((event) => event.type === "PushEvent")
-    .reduce((sum, event) => sum + ((event.payload && event.payload.commits && event.payload.commits.length) || 0), 0);
+    .reduce(
+      (sum, event) =>
+        sum + ((event.payload && event.payload.commits && event.payload.commits.length) || 0),
+      0
+    );
 
   const insightRows = [
     `PR Merge Rate (public): ${mergeRate}`,
@@ -334,8 +550,12 @@ async function buildInsightBundle(payload) {
   return {
     insightRows,
     languageBytesRows,
-    stackRows: stackRows.length ? stackRows : ["No framework/tool signals detected from sampled repositories."],
-    maturityRows: maturityRows.length ? maturityRows : ["No owned public repositories available for maturity analysis."],
+    stackRows: stackRows.length
+      ? stackRows
+      : ["No framework/tool signals detected from sampled repositories."],
+    maturityRows: maturityRows.length
+      ? maturityRows
+      : ["No owned public repositories available for maturity analysis."],
   };
 }
 
@@ -360,28 +580,13 @@ function registerStackSignals(stackCounts, rootNames, hasCi) {
   });
 }
 
-function estimateEventWindowDays(events) {
-  if (!events.length) return 0;
-  const newest = new Date(events[0].created_at).getTime();
-  const oldest = new Date(events[events.length - 1].created_at).getTime();
-  return Math.max(1, Math.round((newest - oldest) / (24 * 60 * 60 * 1000)));
-}
-
-function getExternalContributionRepoCount(login, events) {
-  const repos = new Set();
-  events.forEach((event) => {
-    if (!event.repo || !event.repo.name) return;
-    if (!event.repo.name.toLowerCase().startsWith(`${login.toLowerCase()}/`)) {
-      repos.add(event.repo.name);
-    }
-  });
-  return repos.size;
-}
-
 function summarizeEvents(events) {
   const recentCommits = events
     .filter((event) => event.type === "PushEvent")
-    .reduce((sum, event) => sum + ((event.payload && event.payload.commits && event.payload.commits.length) || 0), 0);
+    .reduce(
+      (sum, event) => sum + ((event.payload && event.payload.commits && event.payload.commits.length) || 0),
+      0
+    );
 
   const pushEvents = events.filter((event) => event.type === "PushEvent").length;
 
@@ -390,7 +595,8 @@ function summarizeEvents(events) {
     const createdAt = prettyDate(event.created_at);
 
     if (event.type === "PushEvent") {
-      const commitCount = (event.payload && event.payload.commits && event.payload.commits.length) || 0;
+      const commitCount =
+        (event.payload && event.payload.commits && event.payload.commits.length) || 0;
       return `${createdAt}: pushed ${commitCount} commit${commitCount === 1 ? "" : "s"} to ${repoName}`;
     }
 
@@ -453,23 +659,23 @@ function buildAchievementItems(payload) {
     rows.push(`${repos100Stars} public repo${repos100Stars > 1 ? "s" : ""} with 100+ stars`);
   }
   if (totalStars > 0) {
-    rows.push(`Community impact: ${formatNumber(totalStars)} stars across public repositories`);
+    rows.push(`Community impact: ${formatNumber(totalStars)} stars across repositories`);
   }
   if (languageCount >= 3) {
     rows.push(`Polyglot profile: active across ${languageCount} primary languages`);
   }
   if (mergedPrs !== null && mergedPrs > 0) {
-    rows.push(`${formatNumber(mergedPrs)} merged public pull requests authored`);
+    rows.push(`${formatNumber(mergedPrs)} merged pull requests authored`);
   }
   if (orgCount > 0) {
-    rows.push(`Visible member of ${formatNumber(orgCount)} public organization${orgCount > 1 ? "s" : ""}`);
+    rows.push(`Visible member of ${formatNumber(orgCount)} organization${orgCount > 1 ? "s" : ""}`);
   }
   if (archivedRepos > 0) {
-    rows.push(`${formatNumber(archivedRepos)} archived public repo${archivedRepos > 1 ? "s" : ""}`);
+    rows.push(`${formatNumber(archivedRepos)} archived repo${archivedRepos > 1 ? "s" : ""}`);
   }
 
   if (rows.length === 0) {
-    rows.push("No standout achievements detected from public API signals yet.");
+    rows.push("No standout achievements detected from current API signals yet.");
   }
 
   return rows;
@@ -477,7 +683,7 @@ function buildAchievementItems(payload) {
 
 function renderTopRepos(repos) {
   if (repos.length === 0) {
-    topReposEl.appendChild(createEmptyItem("No public repositories found."));
+    topReposEl.appendChild(createSimpleItem("No repositories found."));
     return;
   }
 
@@ -496,7 +702,7 @@ function renderTopRepos(repos) {
 
 function renderLanguages(languages) {
   if (languages.length === 0) {
-    languagesEl.appendChild(createEmptyItem("No languages detected."));
+    languagesEl.appendChild(createSimpleItem("No languages detected."));
     return;
   }
 
@@ -507,40 +713,6 @@ function renderLanguages(languages) {
       <span class="pill">${count} repo${count > 1 ? "s" : ""}</span>
     `;
     languagesEl.appendChild(item);
-  });
-}
-
-function renderLanguageBytesChart(rows) {
-  if (!rows.length) {
-    languageBytesChartEl.innerHTML = "";
-    return;
-  }
-  const total = rows.reduce((sum, row) => sum + row[1], 0);
-  languageBytesChartEl.innerHTML = "";
-  rows.forEach(([language, bytes]) => {
-    const percent = total > 0 ? Math.round((bytes / total) * 100) : 0;
-    const row = document.createElement("div");
-    row.className = "lang-row";
-    row.innerHTML = `
-      <span class="lang-label">${escapeHtml(language)}</span>
-      <div class="lang-bar" style="width:${percent}%"></div>
-      <span class="lang-value">${percent}%</span>
-    `;
-    languageBytesChartEl.appendChild(row);
-  });
-}
-
-function renderLanguageBytesList(rows) {
-  if (!rows.length) {
-    languageBytesListEl.appendChild(createEmptyItem("No language byte data available from sampled repositories."));
-    return;
-  }
-  const total = rows.reduce((sum, row) => sum + row[1], 0);
-  rows.forEach(([language, bytes]) => {
-    const percent = total > 0 ? ((bytes / total) * 100).toFixed(1) : "0.0";
-    languageBytesListEl.appendChild(
-      createEmptyItem(`${language}: ${percent}% (${formatNumber(bytes)} bytes)`)
-    );
   });
 }
 
@@ -566,29 +738,65 @@ function renderLanguageChart(languages) {
   });
 }
 
+function renderLanguageBytesChart(rows) {
+  if (!rows.length) {
+    languageBytesChartEl.innerHTML = "";
+    return;
+  }
+  const total = rows.reduce((sum, row) => sum + row[1], 0);
+  languageBytesChartEl.innerHTML = "";
+  rows.forEach(([language, bytes]) => {
+    const percent = total > 0 ? Math.round((bytes / total) * 100) : 0;
+    const row = document.createElement("div");
+    row.className = "lang-row";
+    row.innerHTML = `
+      <span class="lang-label">${escapeHtml(language)}</span>
+      <div class="lang-bar" style="width:${percent}%"></div>
+      <span class="lang-value">${percent}%</span>
+    `;
+    languageBytesChartEl.appendChild(row);
+  });
+}
+
+function renderLanguageBytesList(rows) {
+  if (!rows.length) {
+    languageBytesListEl.appendChild(
+      createSimpleItem("No language byte data available from sampled repositories.")
+    );
+    return;
+  }
+  const total = rows.reduce((sum, row) => sum + row[1], 0);
+  rows.forEach(([language, bytes]) => {
+    const percent = total > 0 ? ((bytes / total) * 100).toFixed(1) : "0.0";
+    languageBytesListEl.appendChild(
+      createSimpleItem(`${language}: ${percent}% (${formatNumber(bytes)} bytes)`)
+    );
+  });
+}
+
 function renderRecentActivity(lines) {
   if (!lines.length) {
-    recentActivityEl.appendChild(createEmptyItem("No recent public activity available."));
+    recentActivityEl.appendChild(createSimpleItem("No recent public activity available."));
     return;
   }
 
   lines.forEach((line) => {
-    recentActivityEl.appendChild(createEmptyItem(line));
+    recentActivityEl.appendChild(createSimpleItem(line));
   });
 }
 
 function renderPlainList(listEl, rows) {
   if (!rows.length) {
-    listEl.appendChild(createEmptyItem("No data available."));
+    listEl.appendChild(createSimpleItem("No data available."));
     return;
   }
 
   rows.forEach((row) => {
-    listEl.appendChild(createEmptyItem(row));
+    listEl.appendChild(createSimpleItem(row));
   });
 }
 
-function createEmptyItem(message) {
+function createSimpleItem(message) {
   const item = document.createElement("li");
   item.className = "simple-item";
   item.textContent = message;
@@ -611,6 +819,7 @@ function clearLists() {
 
 function setLoading(loading) {
   generateButton.disabled = loading;
+  loginButton.disabled = loading;
   generateButton.textContent = loading ? "Generating..." : "Generate Resume";
   if (loading) {
     setStatus("Collecting profile, repositories, organizations, PRs, and activity...");
@@ -622,6 +831,11 @@ function setStatus(message, isError = false) {
   statusEl.style.color = isError ? "#b00020" : "";
 }
 
+function setAuthMeta(message, isError = false) {
+  authMetaEl.textContent = message;
+  authMetaEl.style.color = isError ? "#b00020" : "";
+}
+
 function formatNumber(value) {
   return Intl.NumberFormat().format(value || 0);
 }
@@ -630,8 +844,29 @@ function getGithubYears(createdAt) {
   if (!createdAt) return "0";
   const createdDate = new Date(createdAt);
   const now = new Date();
-  const years = Math.max(0, Math.floor((now - createdDate) / (365.25 * 24 * 60 * 60 * 1000)));
+  const years = Math.max(
+    0,
+    Math.floor((now - createdDate) / (365.25 * 24 * 60 * 60 * 1000))
+  );
   return String(years);
+}
+
+function estimateEventWindowDays(events) {
+  if (!events.length) return 0;
+  const newest = new Date(events[0].created_at).getTime();
+  const oldest = new Date(events[events.length - 1].created_at).getTime();
+  return Math.max(1, Math.round((newest - oldest) / (24 * 60 * 60 * 1000)));
+}
+
+function getExternalContributionRepoCount(login, events) {
+  const repos = new Set();
+  events.forEach((event) => {
+    if (!event.repo || !event.repo.name) return;
+    if (!event.repo.name.toLowerCase().startsWith(`${login.toLowerCase()}/`)) {
+      repos.add(event.repo.name);
+    }
+  });
+  return repos.size;
 }
 
 function prettyDate(isoValue) {
@@ -641,6 +876,10 @@ function prettyDate(isoValue) {
     month: "short",
     day: "numeric",
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function escapeHtml(text) {

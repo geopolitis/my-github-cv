@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Work+Sans:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./style.css?v=20260221-1" />
+    <link rel="stylesheet" href="./style.css?v=20260221-2" />
   </head>
   <body>
     <main class="page">
@@ -20,6 +20,36 @@
       </header>
 
       <section class="controls">
+        <div class="auth-controls">
+          <label for="oauth-client-id">GitHub OAuth Client ID</label>
+          <div class="input-row">
+            <input
+              id="oauth-client-id"
+              name="oauth-client-id"
+              type="text"
+              placeholder="Paste your GitHub OAuth App Client ID"
+            />
+            <button id="login-btn" type="button">Sign in with GitHub</button>
+          </div>
+          <div class="action-row">
+            <button id="logout-btn" type="button" class="ghost hidden">Sign out</button>
+          </div>
+          <p id="auth-meta" class="status" aria-live="polite"></p>
+          <div id="device-panel" class="device-panel hidden">
+            <p>
+              1. Open
+              <a id="verify-link" href="https://github.com/login/device" target="_blank" rel="noreferrer"
+                >github.com/login/device</a
+              >
+            </p>
+            <p>
+              2. Enter code:
+              <strong id="user-code">-</strong>
+            </p>
+            <p id="device-status" class="meta"></p>
+          </div>
+        </div>
+
         <form id="resume-form" autocomplete="off">
           <label for="username">GitHub Username</label>
           <div class="input-row">
@@ -131,6 +161,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260221-1"></script>
+    <script src="./app.js?v=20260221-2"></script>
   </body>
 </html>
